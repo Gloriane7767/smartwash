@@ -1,9 +1,20 @@
 package com.gloriane.smartwash.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class SensorReadingDTO {
+    @JsonProperty("site_name")
     private String siteName;
+
+    @JsonProperty("water_level")
     private Double waterLevel;
+
+    @JsonProperty("battery_level")
     private Double batteryLevel;
+
+    @JsonProperty("water_quality")
     private String waterQuality;
 
     // Default constructor - required for JSON parsing
