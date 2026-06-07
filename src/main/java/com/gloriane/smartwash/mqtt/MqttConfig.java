@@ -1,4 +1,4 @@
-package com.gloriane.smartwash.config.mqtt;
+package com.gloriane.smartwash.mqtt;
 
 /*import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;

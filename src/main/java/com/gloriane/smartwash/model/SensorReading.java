@@ -59,6 +59,18 @@ public class SensorReading {
     public LocalDateTime getTimestamp() { return timestamp; }
     public void setTimestamp(LocalDateTime timestamp) { this.timestamp = timestamp; }
 
+    public String getStatusBadge() {
+        if (waterLevel < 25.0) return "Critical";
+        if (waterLevel < 50.0) return "Monitor";
+        return "Normal";
+    }
+
+    public String getStatusClass() {
+        if (waterLevel < 25.0) return "badge badge-danger";
+        if (waterLevel < 50.0) return "badge badge-warn";
+        return "badge badge-ok";
+    }
+
     @Override
     public String toString() {
         return "SensorReading{" +

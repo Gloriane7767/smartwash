@@ -57,4 +57,10 @@ public class SensorReadingController {
             @PathVariable String siteName) {
         return ResponseEntity.ok(service.getCriticalReadingsForSite(siteName));
     }
+
+    // GET /api/readings/count — get total reading count
+    @GetMapping("/count")
+    public ResponseEntity<Long> getTotalCount() {
+        return ResponseEntity.ok((long) service.getAllReadings().size());
+    }
 }

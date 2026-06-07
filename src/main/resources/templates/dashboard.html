@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartWASH Water Monitor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.6.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            min-height: 100vh;
+        }
+        .header {
+            background: #1e293b;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #334155;
+        }
+        .header h1 { font-size: 1.25rem; font-weight: 600; color: #38bdf8; }
+        .header h1 span { color: #e2e8f0; }
+        .live-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+        .live-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: #f87171;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .alert-banner {
+            background: #7f1d1d;
+            border-left: 4px solid #ef4444;
+            padding: 0.75rem 2rem;
+            font-size: 0.875rem;
+            display: none;
+        }
+        .alert-banner.visible { display: block; }
+        .main { padding: 1.5rem 2rem; }
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .stat-card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 1.25rem;
+            border: 1px solid #334155;
+        }
+        .stat-label {
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .stat-value { font-size: 1.75rem; font-weight: 700; color: #38bdf8; }
+        .stat-sub { font-size: 0.75rem; color: #64748b; margin-top: 0.25rem; }
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        .card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 1.25rem;
+            border: 1px solid #334155;
+        }
+        .card-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #94a3b8;
+            margin-bottom: 1rem;
+        }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        th {
+            text-align: left;
+            padding: 0.75rem 1rem;
+            font-size: 0.75rem;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid #334155;
+        }
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid #1e293b;
+            color: #cbd5e1;
+        }
+        tr:hover td { background: #0f172a; }
+        .badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .badge-ok { background: #14532d; color: #4ade80; }
+        .badge-warn { background: #713f12; color: #fbbf24; }
+        .badge-danger { background: #7f1d1d; color: #f87171; }
+        @keyframes flashRow {
+            0% { background: #1d4ed8; }
+            100% { background: transparent; }
+        }
+        .new-reading { animation: flashRow 2s ease-out; }
+        @media (max-width: 600px) {
+            .charts-row { grid-template-columns: 1fr; }
+            .main { padding: 1rem; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>💧 SmartWASH <span>Water Monitor</span></h1>
+    <div class="live-badge">
+        <div class="live-dot" id="live-dot"></div>
+        <span id="connection-status">Connecting...</span>
+    </div>
+</div>
+
+<div class="alert-banner" id="alert-banner">
+    <strong>Alert:</strong> <span id="alert-text"></span>
+</div>
+
+<div class="main">
+
+    <div class="stats-row">
+        <div class="stat-card">
+            <div class="stat-label">Total Readings</div>
+            <div class="stat-value" id="total-readings"
+                 th:text="${totalReadings}">0</div>
+            <div class="stat-sub">All sites combined</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Critical Alerts</div>
+            <div class="stat-value" id="critical-count"
+                 th:text="${criticalCount}"
+                 style="color:#f87171;">0</div>
+            <div class="stat-sub">Water level below 25%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Active Sites</div>
+            <div class="stat-value">2</div>
+            <div class="stat-sub">Bamenda, Buea</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Network</div>
+            <div class="stat-value"
+                 style="font-size:1rem; padding-top:0.4rem;">TTN</div>
+            <div class="stat-sub">LoRaWAN connected</div>
+        </div>
+    </div>
+
+    <div class="charts-row">
+        <div class="card">
+            <div class="card-title">📈 Water Level History</div>
+            <canvas id="levelChart" height="200"></canvas>
+        </div>
+        <div class="card">
+            <div class="card-title">🔋 Latest Readings</div>
+            <div id="latest-cards">
+                <p style="color:#64748b; font-size:0.875rem;">
+                    Waiting for sensor data...</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-title">📋 Recent Sensor Readings</div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>Site</th>
+                    <th>Water Level</th>
+                    <th>Battery</th>
+                    <th>Quality</th>
+                    <th>Time</th>
+                    <th>Status</th>
+                </tr>
+                </thead>
+                <tbody id="readings-table">
+                <tr th:each="r : ${readings}">
+                    <td th:text="${r.siteName}">Site</td>
+                    <td th:text="${r.waterLevel} + '%'">0%</td>
+                    <td th:text="${r.batteryLevel} + '%'">0%</td>
+                    <td th:text="${r.waterQuality}">Good</td>
+                    <td th:text="${r.timestamp}">Time</td>
+                    <td>
+                            <span th:class="${r.statusClass}"
+                                  th:text="${r.statusBadge}">
+                                Normal
+                            </span>
+                    </td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    var ctx = document.getElementById('levelChart').getContext('2d');
+    var levelChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Bamenda Well',
+                    data: [],
+                    borderColor: '#38bdf8',
+                    backgroundColor: 'rgba(56,189,248,0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 3
+                },
+                {
+                    label: 'Buea Borehole',
+                    data: [],
+                    borderColor: '#4ade80',
+                    backgroundColor: 'rgba(74,222,128,0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 3
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    labels: { color: '#94a3b8', font: { size: 11 } }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: { color: '#64748b', font: { size: 10 } },
+                    grid: { color: '#1e293b' }
+                },
+                y: {
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        color: '#64748b',
+                        callback: function(v) { return v + '%'; }
+                    },
+                    grid: { color: '#334155' }
+                }
+            }
+        }
+    });
+
+    var latestReadings = {};
+    var chartLabels = [];
+    var readingCount = parseInt(
+        document.getElementById('total-readings').textContent) || 0;
+
+    function connectWebSocket() {
+        var socket = new SockJS('/ws', null, {
+            transports: ['websocket', 'xhr-streaming', 'xhr-polling']
+        });
+        var stompClient = Stomp.over(socket);
+        stompClient.debug = null;
+
+        stompClient.connect({}, function(frame) {
+            document.getElementById('connection-status').textContent
+                = 'Live - Connected';
+            document.getElementById('live-dot').style.background
+                = '#22c55e';
+
+            stompClient.subscribe('/topic/readings', function(msg) {
+                var reading = JSON.parse(msg.body);
+                addReadingToTable(reading);
+                updateChart(reading);
+                updateStats();
+            });
+
+            stompClient.subscribe('/topic/alerts', function(msg) {
+                showAlert(msg.body);
+            });
+
+        }, function(error) {
+            document.getElementById('connection-status').textContent
+                = 'Reconnecting...';
+            document.getElementById('live-dot').style.background
+                = '#f87171';
+            setTimeout(connectWebSocket, 3000);
+        });
+    }
+
+    function addReadingToTable(reading) {
+        var tbody = document.getElementById('readings-table');
+        var level = reading.waterLevel;
+        var badgeClass = level < 25 ? 'badge badge-danger'
+            : level < 50 ? 'badge badge-warn'
+                : 'badge badge-ok';
+        var badgeText = level < 25 ? 'Critical'
+            : level < 50 ? 'Monitor'
+                : 'Normal';
+        var timeStr = new Date().toLocaleTimeString();
+        var row = document.createElement('tr');
+        row.className = 'new-reading';
+        row.innerHTML =
+            '<td>' + reading.siteName + '</td>' +
+            '<td>' + reading.waterLevel + '%</td>' +
+            '<td>' + reading.batteryLevel + '%</td>' +
+            '<td>' + reading.waterQuality + '</td>' +
+            '<td>' + timeStr + '</td>' +
+            '<td><span class="badge ' + badgeClass + '">'
+            + badgeText + '</span></td>';
+        tbody.insertBefore(row, tbody.firstChild);
+        while (tbody.rows.length > 20) {
+            tbody.deleteRow(tbody.rows.length - 1);
+        }
+        updateLatestCards(reading);
+    }
+
+    function updateChart(reading) {
+        var time = new Date().toLocaleTimeString();
+        if (chartLabels.length === 0
+            || chartLabels[chartLabels.length - 1] !== time) {
+            chartLabels.push(time);
+            if (chartLabels.length > 10) { chartLabels.shift(); }
+            levelChart.data.labels = chartLabels;
+        }
+        if (reading.siteName === 'Bamenda Well') {
+            levelChart.data.datasets[0].data.push(reading.waterLevel);
+            if (levelChart.data.datasets[0].data.length > 10) {
+                levelChart.data.datasets[0].data.shift();
+            }
+        } else if (reading.siteName === 'Buea Borehole') {
+            levelChart.data.datasets[1].data.push(reading.waterLevel);
+            if (levelChart.data.datasets[1].data.length > 10) {
+                levelChart.data.datasets[1].data.shift();
+            }
+        }
+        levelChart.update();
+    }
+
+    function updateLatestCards(reading) {
+        latestReadings[reading.siteName] = reading;
+        var container = document.getElementById('latest-cards');
+        container.innerHTML = '';
+        var sites = Object.keys(latestReadings);
+        for (var i = 0; i < sites.length; i++) {
+            var r = latestReadings[sites[i]];
+            var level = r.waterLevel;
+            var color = level < 25 ? '#f87171'
+                : level < 50 ? '#fbbf24'
+                    : '#4ade80';
+            container.innerHTML +=
+                '<div style="margin-bottom:12px; padding:10px;' +
+                ' background:#0f172a; border-radius:8px;' +
+                ' border-left:3px solid ' + color + '">' +
+                '<div style="font-weight:600; font-size:0.875rem;">'
+                + r.siteName + '</div>' +
+                '<div style="font-size:1.5rem; font-weight:700;' +
+                ' color:' + color + '; margin:4px 0;">'
+                + r.waterLevel + '%</div>' +
+                '<div style="font-size:0.75rem; color:#64748b;">' +
+                'Battery: ' + r.batteryLevel +
+                '% - Quality: ' + r.waterQuality +
+                '</div></div>';
+        }
+    }
+
+    function showAlert(message) {
+        var banner = document.getElementById('alert-banner');
+        document.getElementById('alert-text').textContent = message;
+        banner.classList.add('visible');
+        setTimeout(function() {
+            banner.classList.remove('visible');
+        }, 10000);
+    }
+
+    function updateStats() {
+        readingCount++;
+        document.getElementById('total-readings').textContent
+            = readingCount;
+    }
+
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) { connectWebSocket(); }
+    });
+
+    connectWebSocket();
+</script>
+
+</body>
+</html>
