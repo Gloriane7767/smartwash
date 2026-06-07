@@ -2,13 +2,17 @@ package com.gloriane.smartwash.config;
 
 import com.gloriane.smartwash.model.SensorReading;
 import com.gloriane.smartwash.repository.SensorReadingRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
-@Component // Marks this class as a Spring component to be automatically detected
+@Component
 public class DataLoader implements CommandLineRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(DataLoader.class);
 
     private final SensorReadingRepository repository;
 
@@ -17,7 +21,7 @@ public class DataLoader implements CommandLineRunner {
     }
 
     @Override
-    public void run(String... args) throws Exception {
+    public void run(String... args) {
         // Simulate sensor readings from 5 Cameroon water sites
         repository.save(new SensorReading(
                 "Bamenda Well", 18.5, 72.0, "Good",
@@ -39,6 +43,6 @@ public class DataLoader implements CommandLineRunner {
                 "Mamfe River", 69.3, 91.0, "Poor",
                 LocalDateTime.now().minusMinutes(2)));
 
-        System.out.println("✅ SmartWASH: Sample sensor data loaded successfully");
+        log.info("SmartWASH: Sample sensor data loaded successfully");
     }
 }

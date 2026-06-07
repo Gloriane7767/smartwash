@@ -6,8 +6,11 @@ import com.gloriane.smartwash.dto.TtnUplinkMessage;
 import com.gloriane.smartwash.model.SensorReading;
 import com.gloriane.smartwash.service.DashboardWebSocketService;
 import com.gloriane.smartwash.service.SensorReadingService;
+import com.gloriane.smartwash.service.SmsAlertService;
 import jakarta.annotation.PostConstruct;
 import org.eclipse.paho.client.mqttv3.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +18,9 @@ import java.time.LocalDateTime;
 
 @Component
 public class MqttSubscriber implements MqttCallback {
+
+    private static final Logger log = LoggerFactory.getLogger(MqttSubscriber.class);
+    private final SmsAlertService smsAlertService;
 
     @Value("${mqtt.topic.uplink}")
     private String topic;
@@ -26,7 +32,7 @@ public class MqttSubscriber implements MqttCallback {
 
     public MqttSubscriber(MqttClient mqttClient,
                           SensorReadingService sensorReadingService,
-                          DashboardWebSocketService webSocketService) {
+                          DashboardWebSocketService webSocketService, SmsAlertService smsAlertService) {
         this.mqttClient = mqttClient;
         this.sensorReadingService = sensorReadingService;
         this.webSocketService = webSocketService;
@@ -35,18 +41,19 @@ public class MqttSubscriber implements MqttCallback {
                         .DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS, false)
                 .configure(com.fasterxml.jackson.databind
                         .DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        this.smsAlertService = smsAlertService;
     }
 
     @PostConstruct
     public void subscribe() throws MqttException {
         mqttClient.setCallback(this);
         mqttClient.subscribe(topic);
-        System.out.println("✅ SmartWASH: Subscribed to TTN topic: " + topic);
+        log.info("SmartWASH: Subscribed to TTN topic: {}", topic);
     }
 
     @Override
     public void connectionLost(Throwable cause) {
-        System.out.println("⚠️ MQTT connection lost: " + cause.getMessage());
+        log.warn("MQTT connection lost: {}", cause.getMessage(), cause);
     }
 
     @Override
@@ -56,18 +63,18 @@ public class MqttSubscriber implements MqttCallback {
                     .replace("\uFEFF", "")
                     .trim();
 
-            System.out.println("📡 TTN message on topic: " + topic);
-            System.out.println("📦 Raw payload: " + payload);
+            log.info("📡 TTN message on topic: {}", topic);
+            log.debug("Raw payload: {}", payload);
 
             SensorReadingDTO dto = parsePayload(payload, topic);
 
             if (dto == null) {
-                System.out.println("⚠️ Could not parse — skipping");
+                log.warn("Could not parse payload — skipping");
                 return;
             }
 
             if (dto.getWaterLevel() == null) {
-                System.out.println("⚠️ Missing waterLevel — skipping");
+                log.warn("Missing waterLevel — skipping");
                 return;
             }
 
@@ -79,43 +86,44 @@ public class MqttSubscriber implements MqttCallback {
                     LocalDateTime.now()
             );
 
-            sensorReadingService.saveReading(reading);
-            System.out.println("💾 Saved: " + reading);
+            SensorReading saved = sensorReadingService.saveReading(reading);
+            log.info("💾 Saved: {}", saved);
 
             webSocketService.broadcastReading(reading);
 
+            // Critical alert
             if (dto.getWaterLevel() < 25.0) {
-                webSocketService.broadcastAlert(dto.getSiteName(), dto.getWaterLevel());
+                // Push to dashboard
+                webSocketService.broadcastAlert(
+                        dto.getSiteName(), dto.getWaterLevel());
+
+                // Send SMS to field workers
+                smsAlertService.sendCriticalWaterAlert(
+                        dto.getSiteName(), dto.getWaterLevel());
             }
 
         } catch (Exception e) {
-            System.out.println("❌ Error: " + e.getMessage());
+            log.error("Error processing MQTT message: {}", e.getMessage(), e);
         }
     }
 
     private SensorReadingDTO parsePayload(String payload, String topic) {
         String deviceId = extractDeviceId(topic);
-        System.out.println("🔍 Device ID: " + deviceId);
+        log.debug("Device ID: {}", deviceId);
 
         try {
-            TtnUplinkMessage ttnMessage = objectMapper.readValue(
-                    payload, TtnUplinkMessage.class);
+            TtnUplinkMessage ttnMessage = objectMapper.readValue(payload, TtnUplinkMessage.class);
 
             if (ttnMessage.getUplinkMessage() != null) {
                 SensorReadingDTO dto = null;
 
-                // Try decoded payload from TTN formatter
-                if (ttnMessage.getUplinkMessage()
-                        .getDecodedPayload() != null) {
-                    dto = ttnMessage.getUplinkMessage()
-                            .getDecodedPayload();
-                    System.out.println("✅ Got decoded payload from TTN");
+                if (ttnMessage.getUplinkMessage().getDecodedPayload() != null) {
+                    dto = ttnMessage.getUplinkMessage().getDecodedPayload();
+                    log.debug("Got decoded payload from TTN");
                 }
 
-                // If waterLevel is still null use simulated values
-                // This handles missing or broken TTN payload formatter
                 if (dto == null || dto.getWaterLevel() == null) {
-                    System.out.println("⚠️ No waterLevel — using simulated values");
+                    log.warn("No waterLevel in TTN payload — using simulated values");
                     dto = new SensorReadingDTO();
                     dto.setWaterLevel(getSimulatedWaterLevel(deviceId));
                     dto.setBatteryLevel(85.0);
@@ -123,24 +131,22 @@ public class MqttSubscriber implements MqttCallback {
                 }
 
                 dto.setSiteName(mapDeviceIdToSiteName(deviceId));
-                System.out.println("✅ Final waterLevel: " + dto.getWaterLevel());
+                log.debug("Final waterLevel: {}", dto.getWaterLevel());
                 return dto;
             }
         } catch (Exception e) {
-            System.out.println("⚠️ TTN parse failed: " + e.getMessage());
+            log.warn("TTN parse failed: {}", e.getMessage(), e);
         }
 
-        // Fallback to simple local format
         try {
-            SensorReadingDTO dto = objectMapper.readValue(
-                    payload, SensorReadingDTO.class);
+            SensorReadingDTO dto = objectMapper.readValue(payload, SensorReadingDTO.class);
             if (dto.getSiteName() == null) {
                 dto.setSiteName(mapDeviceIdToSiteName(deviceId));
             }
-            System.out.println("✅ Parsed as simple format");
+            log.debug("Parsed as simple format");
             return dto;
         } catch (Exception e) {
-            System.out.println("❌ Could not parse payload");
+            log.error("Could not parse payload: {}", e.getMessage(), e);
             return null;
         }
     }
@@ -158,7 +164,7 @@ public class MqttSubscriber implements MqttCallback {
             String[] parts = topic.split("/");
             if (parts.length >= 4) return parts[3];
         } catch (Exception e) {
-            System.out.println("⚠️ Could not extract device ID");
+            log.warn("Could not extract device ID from topic: {}", topic);
         }
         return "unknown-device";
     }
